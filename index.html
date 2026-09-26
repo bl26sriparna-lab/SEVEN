@@ -665,5 +665,255 @@ footer .fm{font-family:'Quicksand';font-weight:500;font-size:11px;letter-spacing
   }).join('');
 })();
 </script>
+<div id="seven-chat-root"></div>
+
+<style>
+  #seven-chat-root * { box-sizing: border-box; font-family: Georgia, 'Times New Roman', serif; }
+
+  #seven-chat-bubble {
+    position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px;
+    border-radius: 50%; background: #8B1E3F; color: #F3ECDD; border: none;
+    cursor: pointer; z-index: 9999; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    font-size: 22px; line-height: 56px; text-align: center;
+  }
+  #seven-chat-bubble.hidden { display: none; }
+
+  #seven-chat-panel {
+    position: fixed; bottom: 92px; right: 24px; width: 320px; max-height: 460px;
+    background: #F3ECDD; border: 1px solid #C9962C; border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.3); z-index: 9999; display: none;
+    flex-direction: column; overflow: hidden;
+  }
+  #seven-chat-panel.open { display: flex; }
+
+  #seven-chat-header {
+    background: #8B1E3F; color: #F3ECDD; padding: 12px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 14px; letter-spacing: 0.04em;
+  }
+  #seven-chat-header .close-btn { cursor: pointer; background: none; border: none; color: #F3ECDD; font-size: 16px; }
+
+  #seven-chat-body { padding: 14px 16px; overflow-y: auto; flex: 1; font-size: 13px; line-height: 1.6; }
+  #seven-chat-body .bot-line { margin-bottom: 10px; color: #2B2118; }
+  #seven-chat-body .bot-line strong { color: #8B1E3F; }
+
+  .seven-btn-row { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .seven-opt-btn {
+    background: #fff; border: 1px solid #C9962C; color: #2B2118; border-radius: 6px;
+    padding: 8px 10px; text-align: left; cursor: pointer; font-size: 13px;
+  }
+  .seven-opt-btn:hover { background: #C9962C; color: #fff; }
+
+  #seven-chat-footer { padding: 10px 16px; border-top: 1px solid #e6d9bf; display: none; gap: 6px; }
+  #seven-chat-footer.visible { display: flex; }
+  #seven-chat-footer input {
+    flex: 1; padding: 8px; border: 1px solid #C9962C; border-radius: 6px; font-size: 13px;
+  }
+  #seven-chat-footer button {
+    background: #8B1E3F; color: #F3ECDD; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer;
+  }
+</style>
+
+<script>
+(function () {
+  // ---- CONFIG: put your n8n production webhook URL here ----
+  var WEBHOOK_URL = "https://dharunnit.n8n-wsk.com/webhook/seven-perfume-chat";
+  var IDLE_MS = 35000;
+
+  var sessionId = "s_" + Math.random().toString(36).slice(2, 10);
+  var attemptNumber = 1;
+  var state = { intent: null, occasion: null, notes_preference: null, intensity: null };
+  var opened = false;
+
+  var root = document.getElementById("seven-chat-root");
+  root.innerHTML =
+    '<button id="seven-chat-bubble">7</button>' +
+    '<div id="seven-chat-panel">' +
+      '<div id="seven-chat-header"><span>Seven</span><button class="close-btn" id="seven-close">close</button></div>' +
+      '<div id="seven-chat-body"></div>' +
+      '<div id="seven-chat-footer"><input type="text" id="seven-text-input" placeholder="Type here..."><button id="seven-send">Send</button></div>' +
+    '</div>';
+
+  var bubble = document.getElementById("seven-chat-bubble");
+  var panel = document.getElementById("seven-chat-panel");
+  var body = document.getElementById("seven-chat-body");
+  var footer = document.getElementById("seven-chat-footer");
+  var textInput = document.getElementById("seven-text-input");
+
+  function addBotLine(html) {
+    var d = document.createElement("div");
+    d.className = "bot-line";
+    d.innerHTML = html;
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function clearOptions() {
+    var existing = body.querySelector(".seven-btn-row");
+    if (existing) existing.remove();
+  }
+
+  function showOptions(options) {
+    clearOptions();
+    var row = document.createElement("div");
+    row.className = "seven-btn-row";
+    options.forEach(function (opt) {
+      var btn = document.createElement("button");
+      btn.className = "seven-opt-btn";
+      btn.textContent = opt.label;
+      btn.onclick = function () { opt.onClick(); };
+      row.appendChild(btn);
+    });
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function showTextInput(placeholder, onSubmit) {
+    footer.classList.add("visible");
+    textInput.value = "";
+    textInput.placeholder = placeholder || "Type here...";
+    var sendBtn = document.getElementById("seven-send");
+    sendBtn.onclick = function () {
+      var v = textInput.value.trim();
+      if (!v) return;
+      footer.classList.remove("visible");
+      addBotLine("<em>You: " + v.replace(/</g, "&lt;") + "</em>");
+      onSubmit(v);
+    };
+    textInput.onkeydown = function (e) {
+      if (e.key === "Enter") sendBtn.onclick();
+    };
+  }
+
+  function openPanel() {
+    panel.classList.add("open");
+    bubble.classList.add("hidden");
+    if (!opened) {
+      opened = true;
+      startFlow();
+    }
+  }
+  function closePanel() {
+    panel.classList.remove("open");
+    bubble.classList.remove("hidden");
+  }
+
+  bubble.addEventListener("click", openPanel);
+  document.getElementById("seven-close").addEventListener("click", closePanel);
+
+  function startFlow() {
+    addBotLine("Hi, taking your time deciding? Happy to help.");
+    showOptions([
+      { label: "Help me pick a scent", onClick: function () { state.intent = "help_me_pick"; askOccasion(); } },
+      { label: "It's a gift", onClick: function () { state.intent = "gift"; sendToWebhook(); } },
+      { label: "Just checking prices", onClick: function () { state.intent = "pricing"; sendToWebhook(); } },
+      { label: "Talk to someone", onClick: function () { state.intent = "talk_to_human"; sendToWebhook(); } },
+      { label: "Something else", onClick: function () {
+          state.intent = "something_else";
+          clearOptions();
+          addBotLine("Sure, tell me a bit about what you're after.");
+          showTextInput("e.g. something warm for winter evenings", function (text) {
+            state.other_text = text;
+            sendToWebhook();
+          });
+        } }
+    ]);
+  }
+
+  function askOccasion() {
+    clearOptions();
+    addBotLine("What's the occasion, roughly?");
+    showOptions([
+      { label: "Everyday", onClick: function () { state.occasion = "everyday"; askNotes(); } },
+      { label: "Evening out", onClick: function () { state.occasion = "evening"; askNotes(); } },
+      { label: "Something festive", onClick: function () { state.occasion = "festive"; askNotes(); } }
+    ]);
+  }
+
+  function askNotes() {
+    clearOptions();
+    addBotLine("Which notes usually pull you in?");
+    showOptions([
+      { label: "Woody", onClick: function () { state.notes_preference = "woody"; askIntensity(); } },
+      { label: "Floral", onClick: function () { state.notes_preference = "floral"; askIntensity(); } },
+      { label: "Fresh", onClick: function () { state.notes_preference = "fresh"; askIntensity(); } },
+      { label: "Earthy", onClick: function () { state.notes_preference = "earthy"; askIntensity(); } },
+      { label: "Sweet or spiced", onClick: function () { state.notes_preference = "sweet_spiced"; askIntensity(); } }
+    ]);
+  }
+
+  function askIntensity() {
+    clearOptions();
+    addBotLine("Light, moderate, or strong?");
+    showOptions([
+      { label: "Light", onClick: function () { state.intensity = "light"; sendToWebhook(); } },
+      { label: "Moderate", onClick: function () { state.intensity = "moderate"; sendToWebhook(); } },
+      { label: "Strong", onClick: function () { state.intensity = "strong"; sendToWebhook(); } }
+    ]);
+  }
+
+  function sendToWebhook() {
+    clearOptions();
+    addBotLine("<em>...</em>");
+    var payload = {
+      session_id: sessionId,
+      intent: state.intent,
+      occasion: state.occasion,
+      notes_preference: state.notes_preference,
+      intensity: state.intensity,
+      other_text: state.other_text || null,
+      attempt_number: attemptNumber
+    };
+    fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json(); })
+      .then(handleResponse)
+      .catch(function (err) {
+        addBotLine("Something went wrong reaching the workflow, please try again in a moment.");
+        console.error(err);
+      });
+  }
+
+  function handleResponse(res) {
+    if (res.reply_type === "question") {
+      addBotLine(res.message);
+      attemptNumber = res.attempt_number || attemptNumber + 1;
+      showTextInput("Type your answer...", function (text) {
+        state.other_text = text;
+        state.intent = "something_else";
+        sendToWebhook();
+      });
+    } else if (res.reply_type === "recommendation") {
+      addBotLine("<strong>" + res.scent + "</strong> - " + res.reason);
+      addBotLine(res.discovery_set_message);
+    } else if (res.reply_type === "escalation") {
+      addBotLine(res.message);
+      showTextInput("your email...", function (email) {
+        addBotLine("Thanks, someone from the team will follow up at " + email.replace(/</g, "&lt;") + ".");
+      });
+    } else if (res.reply_type === "canned") {
+      addBotLine(res.message);
+    } else {
+      addBotLine("Sorry, I didn't quite catch that, mind trying again?");
+    }
+  }
+
+  // ---- idle detection ----
+  var idleTimer;
+  function resetIdle() {
+    clearTimeout(idleTimer);
+    if (!opened) {
+      idleTimer = setTimeout(openPanel, IDLE_MS);
+    }
+  }
+  ["mousemove", "scroll", "keydown", "click", "touchstart"].forEach(function (evt) {
+    document.addEventListener(evt, resetIdle, { passive: true });
+  });
+  resetIdle();
+})();
+</script>
 </body>
 </html>
